@@ -1,0 +1,263 @@
+#!/usr/bin/env ruby
+#
+#  USAGE
+#
+#  build a base file that contains an empty project
+#
+#
+#  hustle new [base image]
+#
+#  SYNTAX
+#
+#  hustle build [dev image]        # build image
+#  hustle new [base image]         # creates new dev env based on base image
+#
+#  hustle stop [image]             # stop image
+#  hustle start, s [env = dev]     # start dev image
+#    -w                            # watch for changes (file-owner-sync)
+#
+#  hustle pristine [image]         # stop and remove image from docker
+#  hustle rebuild, [dev]           # rebuild image
+#
+#  hustle sync [dev]               # copy dev app files to local
+#  hustle file-owner-sync [dev]    # watch for new files and sync
+#  hustle run [cmd] [image]        # run command on image
+#  hustle debug                    # Shell into new container based off image
+#  hustle shell                    # Shell into running container
+#
+require 'optparse'
+
+class Hustler < Struct.new(:argv, :options)
+  DOT_FILE = '.env'
+
+  def debug
+    puts leave_script_and_exec(%|docker run -it --entrypoint=/bin/bash #{image} -s|)
+  end
+
+  def stop
+    exec_within_script "docker stop #{image}"
+  end
+
+  def remove
+    exec_within_script "docker rm #{image}"
+  end
+
+  def remove_image
+    exec_within_script "docker rmi #{image}"
+  end
+
+  def stop_and_remove
+    compose? ? stop_compose : (stop && remove)
+  end
+
+  def stop_compose
+    exec_within_script "docker-compose down"
+  end
+
+  def start
+    compose? ? start_compose : start_container
+  end
+
+  def compose?
+    File.exist?('docker-compose.yaml')
+  end
+  
+  def start_compose
+    exec_within_script "docker-compose up #{options[:daemonize]}"
+  end
+
+  def start_container
+    exec_within_script "docker run #{ports} #{link} #{options[:daemonize]} --name #{image} #{image}"
+  end
+
+  def link
+    options[:link] || '-v $(pwd)/myapp:/myapp'
+  end
+
+  def restart
+    stop_and_remove
+    start
+  end
+
+  def run(cmd)
+    puts exec_within_script(%|docker exec #{image} sh -c "#{cmd}"|)
+  end
+
+  def build
+    exec_within_script "docker build . --no-cache=true -t #{image}"
+  end
+
+  def shell
+    cmd = "docker exec -t -i #{image} /bin/bash"
+    leave_script_and_exec(cmd)
+  end
+
+  def new_app
+    require 'digest/sha1'
+    if args.length != 1
+      puts "SYNTAX\n\nhustle new [image]"
+      exit 1
+    end
+    base_image = args.first
+
+    @dev_image = "#{base_image.sub(/base$/,'app')}-#{Digest::SHA1.hexdigest(Time.now.to_s)[0..5]}"
+    File.write(DOT_FILE, "CONTAINER_NAME=#{dev_image}")
+
+    puts "Attempting to start container based on #{base_image}"
+    `docker run -d --name #{image} #{base_image}`
+
+    puts "Copying #{image}:/app to local"
+    `docker cp #{image}:/app $(pwd)`
+
+    puts "Removing #{image}"
+    stop_and_remove
+
+    puts "Building new image #{image}"
+    build
+  end
+
+  def execute
+    case command
+    when 'new'
+      new_app
+    when "rebuild", "build"
+      build
+    when "file-owner-sync"
+      run("export USERID=#{Process.uid} && export GROUPID=#{Process.gid} && file-chown-sync")
+    when "run-hard"
+      leave_script_and_exec(args.join(' '))
+    when "run"
+      run(args.join(' '))
+    when 'debug'
+      debug
+    when "shell"
+      shell
+    when "restart", "r"
+      restart
+    when "start", "s"
+      start
+    when "stop"
+      stop
+    when "rm"
+      remove
+    when 'pristine'
+      stop_and_remove
+      remove_image
+    else
+      puts "ERROR: hustle '#{command}' does not exist. Run 'hustle --help'"
+    end
+  end
+
+  def prod_image 
+    "#{dev_image}-prod"
+  end
+
+  def env
+    options.fetch(:env, "development")
+  end
+
+  def ports
+    "-p #{options.fetch(:ports, "3000:3000")}"
+  end
+
+  def dev_image
+    @dev_image ||= 
+      if File.exists?(DOT_FILE)
+        File.read(DOT_FILE).strip.split(/=/).last
+      else
+        raise "Unable to find '#{DOT_FILE}' in current directory"
+      end
+  end
+
+  private
+
+  def leave_script_and_exec(cmd)
+    cmd = cmd.squeeze ' '
+    puts "Running: #{cmd}"
+    exec cmd # Use Kernel#exec to kill this script and replace with cmd
+  end
+
+  def exec_within_script(cmd)
+    cmd = cmd.squeeze ' '
+    puts "running: #{cmd}"
+    retval = `#{cmd}`
+    if (status = $?.exitstatus).zero? 
+      retval
+    else
+      puts "ERROR #{status}"
+      exit status
+    end
+  end
+
+  def image
+    options[:env] == "production" ? prod_image : dev_image
+  end
+
+  def app_dir
+    super || "app"
+  end
+
+  def command 
+    argv.first
+  end
+
+  def args
+    argv.drop(1)
+  end
+end
+
+
+options = {}
+OptionParser.new do |opts|
+  opts.banner = <<-EOS
+Side Hustle Kit Command Line App. Copyright 2017. SHK, Inc.
+
+USAGE
+
+hustle build [image]            # build image
+hustle new [image]              # creates new dev env based on base image
+
+hustle stop [image]             # stop image
+hustle start [image]            # start dev image
+hustle shell [image]            # open shell on running image
+
+hustle pristine [image]         # stop and remove image from docker
+hustle rebuild, [image]         # rebuild image
+
+hustle sync [image]             # copy dev app files to local
+hustle file-owner-sync [image]  # watch for new files and sync
+hustle run [cmd] [image]        # run command on image from within script
+hustle run-hard [cmd] [image]        # leave script and run command on image
+
+EOS
+
+  opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
+    options[:verbose] = v
+  end
+
+  opts.on("-d", "Run as daemon") do
+    options[:daemonize] = '-d'
+  end
+
+  opts.on("-e", "--env ENV", "Environment") do |env|
+    options[:env] = env
+  end
+
+  opts.on("-nl", "--no-links", "Do not link to container volume") do
+    options[:link] = ""
+  end
+
+  opts.on("-f", "--force", "Force action") do
+    options[:force] = '-f'
+  end
+
+  opts.on("-p", "--ports external:internal", "Link external to interal ports") do |ports|
+    options[:ports] = ports
+  end
+
+  opts.on("-h", "--help", "Show this help message") do
+    puts opts
+  end
+end.parse!
+
+Hustler.new(ARGV, options).execute

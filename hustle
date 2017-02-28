@@ -27,19 +27,37 @@
 #
 require 'optparse'
 
+DOCKER_COMPOSE = {
+  start:  "docker-compose up #{options[:daemonize]}",
+  stop:   "docker-compose down",
+  build:  "docker-compose build",
+  remove: "",
+}
+
+DOCKER = {
+  start:  "docker run #{ports} #{link} #{options[:daemonize]} --name #{image} #{image}",
+  stop:   "docker stop #{image}",
+  build:  "docker build . --no-cache=true -t #{image}",
+  remove: "docker rm #{image}",
+}
+
 class Hustler < Struct.new(:argv, :options)
   DOT_FILE = '.env'
 
+  def fetch_command(cmd)
+    (compose? ? COMPOSE : DOCKER)[cmd.to_sym]
+  end
+
   def debug
-    puts leave_script_and_exec(%|docker run -it --entrypoint=/bin/bash #{image} -s|)
+    leave_script_and_exec(%|docker run -it --entrypoint=/bin/bash #{image} -s|)
   end
 
   def stop
-    exec_within_script "docker stop #{image}"
+    exec_within_script fetch_command(:stop)
   end
 
   def remove
-    exec_within_script "docker rm #{image}"
+    exec_within_script fetch_command(:remove)
   end
 
   def remove_image
@@ -47,36 +65,19 @@ class Hustler < Struct.new(:argv, :options)
   end
 
   def stop_and_remove
-    compose? ? stop_compose : (stop && remove)
-  end
-
-  def stop_compose
-    exec_within_script "docker-compose down"
+    stop && remove
   end
 
   def start
-    compose? ? start_compose : start_container
+    exec_within_script fetch_command(:start)
   end
 
   def compose?
     File.exist?('docker-compose.yaml')
   end
-  
-  def start_compose
-    exec_within_script "docker-compose up #{options[:daemonize]}"
-  end
-
-  def start_container
-    exec_within_script "docker run #{ports} #{link} #{options[:daemonize]} --name #{image} #{image}"
-  end
-
-  def link
-    options[:link] || '-v $(pwd)/myapp:/myapp'
-  end
 
   def restart
-    stop_and_remove
-    start
+    stop_and_remove && start
   end
 
   def run(cmd)
@@ -84,7 +85,7 @@ class Hustler < Struct.new(:argv, :options)
   end
 
   def build
-    exec_within_script "docker build . --no-cache=true -t #{image}"
+    exec_within_script fetch_command(:build)
   end
 
   def shell
@@ -141,8 +142,7 @@ class Hustler < Struct.new(:argv, :options)
     when "rm"
       remove
     when 'pristine'
-      stop_and_remove
-      remove_image
+      stop_and_remove && remove_image
     else
       puts "ERROR: hustle '#{command}' does not exist. Run 'hustle --help'"
     end
@@ -156,10 +156,6 @@ class Hustler < Struct.new(:argv, :options)
     options.fetch(:env, "development")
   end
 
-  def ports
-    "-p #{options.fetch(:ports, "3000:3000")}"
-  end
-
   def dev_image
     @dev_image ||= 
       if File.exists?(DOT_FILE)
@@ -170,6 +166,14 @@ class Hustler < Struct.new(:argv, :options)
   end
 
   private
+
+  def ports
+    "-p #{options.fetch(:ports, "3000:3000")}"
+  end
+
+  def link
+    options[:link] || '-v $(pwd)/myapp:/myapp'
+  end
 
   def leave_script_and_exec(cmd)
     cmd = cmd.squeeze ' '

@@ -27,25 +27,26 @@
 #
 require 'optparse'
 
-DOCKER_COMPOSE = {
-  start:  "docker-compose up #{options[:daemonize]}",
-  stop:   "docker-compose down",
-  build:  "docker-compose build",
-  remove: "",
-}
-
-DOCKER = {
-  start:  "docker run #{ports} #{link} #{options[:daemonize]} --name #{image} #{image}",
-  stop:   "docker stop #{image}",
-  build:  "docker build . --no-cache=true -t #{image}",
-  remove: "docker rm #{image}",
-}
 
 class Hustler < Struct.new(:argv, :options)
   DOT_FILE = '.env'
 
   def fetch_command(cmd)
-    (compose? ? COMPOSE : DOCKER)[cmd.to_sym]
+    docker_compose = {
+      start:  "docker-compose up #{options[:daemonize]}",
+      stop:   "docker-compose down",
+      build:  "docker-compose build",
+      remove: "",
+    }
+
+    docker = {
+      start:  "docker run #{ports} #{link} #{options[:daemonize]} --name #{image} #{image}",
+      stop:   "docker stop #{image}",
+      build:  "docker build . --no-cache=true -t #{image}",
+      remove: "docker rm #{image}",
+    }
+
+    (compose? ? docker_compose : docker)[cmd.to_sym]
   end
 
   def debug

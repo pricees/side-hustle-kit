@@ -12,17 +12,17 @@
 #  hustle build [dev image]        # build image
 #  hustle new [base image]         # creates new dev env based on base image
 #
-#  hustle stop [image]             # stop image
-#  hustle start, s [env = dev]     # start dev image
+#  hustle stop [container]             # stop container
+#  hustle start, s [env = dev]     # start dev container
 #    -w                            # watch for changes (file-owner-sync)
 #
-#  hustle pristine [image]         # stop and remove image from docker
-#  hustle rebuild, [dev]           # rebuild image
+#  hustle pristine [container]         # stop and remove container from docker
+#  hustle rebuild, [dev]           # rebuild container
 #
 #  hustle sync [dev]               # copy dev app files to local
 #  hustle file-owner-sync [dev]    # watch for new files and sync
-#  hustle run [cmd] [image]        # run command on image
-#  hustle debug                    # Shell into new container based off image
+#  hustle run [cmd] [container]        # run command on container
+#  hustle debug                    # Shell into new container based off container
 #  hustle shell                    # Shell into running container
 #
 require 'optparse'
@@ -102,8 +102,8 @@ class Hustler < Struct.new(:argv, :options)
     end
     base_image = args.first
 
-    @dev_image = "#{base_image.sub(/base$/,'app')}-#{Digest::SHA1.hexdigest(Time.now.to_s)[0..5]}"
-    File.write(DOT_FILE, "CONTAINER_NAME=#{dev_image}")
+    @dev_container = "#{base_image.sub(/base$/,'app')}-#{Digest::SHA1.hexdigest(Time.now.to_s)[0..5]}"
+    File.write(DOT_FILE, "CONTAINER_NAME=#{dev_container}")
 
     puts "Attempting to start container based on #{base_image}"
     `docker run -d --name #{image} #{base_image}`
@@ -145,28 +145,41 @@ class Hustler < Struct.new(:argv, :options)
     when 'pristine'
       stop_and_remove && remove_image
     else
-      puts "ERROR: hustle '#{command}' does not exist. Run 'hustle --help'"
+      puts "\n\nERROR: hustle '#{command}' does not exist. Run 'hustle --help'"
+      puts "\n\nConfig:\n\n\t#{config.inspect}\n\n"
+      puts "\n\nOptions:\n\n\t#{options.inspect}\n\n"
     end
   end
 
-  def prod_image 
-    "#{dev_image}-prod"
+  def prod_container 
+    "#{dev_container}-prod"
   end
 
   def env
-    options.fetch(:env, "development")
+    config('env') || options.fetch(:env, "development")
   end
 
-  def dev_image
-    @dev_image ||= 
-      if File.exists?(DOT_FILE)
-        File.read(DOT_FILE).strip.split(/=/).last
-      else
-        raise "Unable to find '#{DOT_FILE}' in current directory"
-      end
+  def config(key = nil)
+    @config ||= load_config!
+    key.nil? ? @config : @config.fetch(key, "No value for :#{key}")
+  end
+
+  def dev_container
+    @dev_container ||= config 'CONTAINER_NAME'
   end
 
   private
+
+  def load_config!(file = DOT_FILE)
+    if File.exists?(DOT_FILE)
+      File.readlines(DOT_FILE).each_with_object({}) do |line, hsh|
+        key, value = line.split(/=/).map(&:strip)
+        hsh[key] = value
+      end
+    else
+      raise "Unable to find '#{DOT_FILE}' in current directory"
+    end
+  end
 
   def ports
     "-p #{options.fetch(:ports, "3000:3000")}"
@@ -195,7 +208,11 @@ class Hustler < Struct.new(:argv, :options)
   end
 
   def image
-    options[:env] == "production" ? prod_image : dev_image
+    if options[:service]
+      config "#{options[:service]}_container_name".upcase
+    else
+      options[:env] == "production" ? prod_container : dev_container
+    end
   end
 
   def app_dir
@@ -215,26 +232,26 @@ end
 options = {}
 OptionParser.new do |opts|
   opts.banner = <<-EOS
-Side Hustle Kit Command Line App. Copyright 2017. SHK, Inc.
+  Side Hustle Kit Command Line App. Copyright 2017. SHK, Inc.
 
-USAGE
+  USAGE
 
-hustle build [image]            # build image
-hustle new [image]              # creates new dev env based on base image
+  hustle build [image]                # build image
+  hustle new [image]                  # creates new dev env based on base image
 
-hustle stop [image]             # stop image
-hustle start [image]            # start dev image
-hustle shell [image]            # open shell on running image
+  hustle stop [container]             # stop container
+  hustle start [container]            # start dev container
+  hustle shell [container]            # open shell on running container
 
-hustle pristine [image]         # stop and remove image from docker
-hustle rebuild, [image]         # rebuild image
+  hustle pristine [container]         # stop and remove container from docker
+  hustle rebuild, [container]         # rebuild container
 
-hustle sync [image]             # copy dev app files to local
-hustle file-owner-sync [image]  # watch for new files and sync
-hustle run [cmd] [image]        # run command on image from within script
-hustle run-hard [cmd] [image]        # leave script and run command on image
+  hustle sync [container]             # copy dev app files to local
+  hustle file-owner-sync [container]  # watch for new files and sync
+  hustle run [cmd] [-s service]       # run command on service from within script
+  hustle run-hard [cmd] [container]   # leave script and run command on container
 
-EOS
+  EOS
 
   opts.on("-v", "--[no-]verbose", "Run verbosely") do |v|
     options[:verbose] = v
@@ -248,8 +265,12 @@ EOS
     options[:env] = env
   end
 
-  opts.on("-nl", "--no-links", "Do not link to container volume") do
+  opts.on("-nl", "--no-links", "Do not link to shared volume") do
     options[:link] = ""
+  end
+
+  opts.on("-l", "--link LINK", "Link to shared volume") do |link|
+    options[:link] = link
   end
 
   opts.on("-f", "--force", "Force action") do
@@ -258,6 +279,10 @@ EOS
 
   opts.on("-p", "--ports external:internal", "Link external to interal ports") do |ports|
     options[:ports] = ports
+  end
+
+  opts.on("-s", "--service [web|db||]", "Service to target with command, defaults to web") do |service|
+    options[:service] = service
   end
 
   opts.on("-h", "--help", "Show this help message") do

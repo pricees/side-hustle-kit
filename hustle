@@ -49,49 +49,58 @@ class Hustler < Struct.new(:argv, :options)
     (compose? ? docker_compose : docker)[cmd.to_sym]
   end
 
-  def debug
-    leave_script_and_exec(%|docker run -it --entrypoint=/bin/bash #{image} -s|)
+  def debug_container
+    print_and_exec(%|docker run -it --entrypoint=/bin/bash #{image} -s|)
   end
 
-  def stop
-    exec_within_script fetch_command(:stop)
+  def stop_container
+    print_and_exec fetch_command(:stop)
   end
 
-  def remove
-    exec_within_script fetch_command(:remove)
+  def remove_container
+    print_and_exec fetch_command(:remove)
   end
 
   def remove_image
-    exec_within_script "docker rmi #{image}"
+    print_and_exec "docker rmi #{image}"
   end
 
-  def stop_and_remove
-    stop && remove
+  def stop_and_remove_container
+
+    stop_container && remove_container
   end
 
-  def start
-    exec_within_script fetch_command(:start)
+  def start_container
+    print_and_exec fetch_command(:start)
   end
 
   def compose?
     File.exist?('docker-compose.yaml')
   end
 
-  def restart
-    stop_and_remove && start
+  def restart_container
+    stop_and_remove_container && start_container
   end
 
-  def run(cmd)
-    puts exec_within_script(%|docker exec #{image} sh -c "#{cmd}"|)
+  # Prepend docker command to run command in container and execute it
+  def exec_in_container(container_cmd)
+    print_and_exec %|docker exec -i -t #{image} sh -c "#{container_cmd}"|
   end
 
-  def build
-    exec_within_script fetch_command(:build)
+  # Print the full command and replace current process with cmd
+  def print_and_exec(cmd)
+    cmd.squeeze!(' ')
+    puts "RUNNING: #{cmd}\\nn"
+    exec cmd
   end
 
+  def build_container
+    print_and_exec fetch_command(:build)
+  end
+
+  # Shell into the container
   def shell
-    cmd = "docker exec -t -i #{image} /bin/bash"
-    leave_script_and_exec(cmd)
+    exec_in_container '/bin/bash'
   end
 
   def new_app
@@ -118,30 +127,32 @@ class Hustler < Struct.new(:argv, :options)
     build
   end
 
+  #
+  # Script methods
+  #
+
   def execute
     case command
     when 'new'
       new_app
     when "rebuild", "build"
-      build
+      build_container
     when "file-owner-sync"
-      run("export USERID=#{Process.uid} && export GROUPID=#{Process.gid} && file-chown-sync")
-    when "run-hard"
-      leave_script_and_exec(args.join(' '))
-    when "run"
-      run(args.join(' '))
+      exec_in_container("export USERID=#{Process.uid} && export GROUPID=#{Process.gid} && file-chown-sync")
+    when "run-hard", "run"
+      exec_in_container(args.join(' '))
     when 'debug'
-      debug
+      debug_container
     when "shell"
-      shell
+      shell_into_container
     when "restart", "r"
-      restart
+      restart_container
     when "start", "s"
-      start
+      start_container
     when "stop"
-      stop
+      stop_container
     when "rm"
-      remove
+      remove_container
     when 'pristine'
       stop_and_remove && remove_image
     else
@@ -187,24 +198,6 @@ class Hustler < Struct.new(:argv, :options)
 
   def link
     options[:link] || '-v $(pwd)/myapp:/myapp'
-  end
-
-  def leave_script_and_exec(cmd)
-    cmd = cmd.squeeze ' '
-    puts "Running: #{cmd}"
-    exec cmd # Use Kernel#exec to kill this script and replace with cmd
-  end
-
-  def exec_within_script(cmd)
-    cmd = cmd.squeeze ' '
-    puts "running: #{cmd}"
-    retval = `#{cmd}`
-    if (status = $?.exitstatus).zero? 
-      retval
-    else
-      puts "ERROR #{status}"
-      exit status
-    end
   end
 
   def image

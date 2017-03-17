@@ -14,13 +14,13 @@
 #
 #  hustle stop [container]             # stop container
 #  hustle start, s [env = dev]     # start dev container
-#    -w                            # watch for changes (file-owner-sync)
+#    -w                            # watch for changes (file-permissions-sync)
 #
 #  hustle pristine [container]         # stop and remove container from docker
 #  hustle rebuild, [dev]           # rebuild container
 #
 #  hustle sync [dev]               # copy dev app files to local
-#  hustle file-owner-sync [dev]    # watch for new files and sync
+#  hustle file-permissions-sync [dev]    # watch for new files and sync
 #  hustle run [cmd] [container]        # run command on container
 #  hustle debug                    # Shell into new container based off container
 #  hustle shell                    # Shell into running container
@@ -32,16 +32,18 @@ class Hustler < Struct.new(:argv, :options)
   DOT_FILE = '.env'
   RC_FILE  = '.hustlerc'
 
-  CONTAINER_RUN_REGEX = begin
-                        defaults = /\brun\b/
-                        File.exists?(RC_FILE) && File.readlines(RC_FILE).each do |line|
-                          if match = /CONTAINER_RUN=(.*)/.match(line.strip)
-                            defaults = /\b(#{match[1].split(/,/).map(&:strip).join('|')})\b/
-                            break
-                          end
-                        end
-                        defaults
-                      end
+  
+  def container_run_regex
+    if (defaults = ENV['CONTAINER_RUN']).nil?
+      defaults = File.exists?(RC_FILE) && File.readlines(RC_FILE).detect do |line|
+        match = /CONTAINER_RUN=(.*)/.match(line.strip)
+        match && match[1]
+      end
+    end
+
+    defaults ||= 'run'
+    /\b(#{defaults.split(/,/).map(&:strip).join('|')})\b/
+  end
 
   def fetch_command(cmd)
     docker_compose = {
@@ -148,10 +150,10 @@ class Hustler < Struct.new(:argv, :options)
       new_app
     when "rebuild", "build"
       build_container
-    when "file-owner-sync"
+    when "file-permissions-sync"
       exec_in_container("export USERID=#{Process.uid} && export GROUPID=#{Process.gid} && file-chown-sync")
     when "run-hard", "run"
-    when CONTAINER_RUN_REGEX 
+    when container_run_regex 
       # Add the command back in
       exec_in_container args.unshift(command).join(' ')
     when 'debug'
@@ -254,7 +256,7 @@ OptionParser.new do |opts|
   hustle rebuild, [container]         # rebuild container
 
   hustle sync [container]             # copy dev app files to local
-  hustle file-owner-sync [container]  # watch for new files and sync
+  hustle file-permissions-sync [container]  # watch for new files and sync
   hustle run [cmd] [-s service]       # run command on service from within script
   hustle run-hard [cmd] [container]   # leave script and run command on container
 

@@ -35,7 +35,11 @@ class Hustler < Struct.new(:argv, :options)
   
   def container_run_regex
     if (defaults = ENV['CONTAINER_RUN']).nil?
-      defaults = File.exists?(RC_FILE) && File.readlines(RC_FILE).detect do |line|
+      lines = (File.exists?(RC_FILE) && File.readlines(RC_FILE)) || 
+              (File.exists?(File.join(ENV['HOME'], RC_FILE)) && File.readlines(File.join(ENV['HOME'], RC_FILE))) ||
+              []
+
+      defaults = lines.detect do |line|
         match = /CONTAINER_RUN=(.*)/.match(line.strip)
         match && match[1]
       end
@@ -153,6 +157,7 @@ class Hustler < Struct.new(:argv, :options)
     when "file-permissions-sync"
       exec_in_container("export USERID=#{Process.uid} && export GROUPID=#{Process.gid} && file-chown-sync")
     when "run-hard", "run"
+      exec_in_container args.join(' ')
     when container_run_regex 
       # Add the command back in
       exec_in_container args.unshift(command).join(' ')
@@ -172,7 +177,7 @@ class Hustler < Struct.new(:argv, :options)
       stop_and_remove && remove_image
     else
       puts "\n\nERROR: hustle '#{command}' does not exist. Run 'hustle --help'"
-      puts "\n\nDefault run syntax:\n\n\th #{CONTAINER_RUN_REGEX}\n\n"
+      puts "\n\nDefault run syntax:\n\n\t#{container_run_regex}\n\n"
       puts "\n\nConfig:\n\n\t#{config.inspect}\n\n"
       puts "\n\nOptions:\n\n\t#{options.inspect}\n\n"
     end

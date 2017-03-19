@@ -39,9 +39,11 @@ class Hustler < Struct.new(:argv, :options)
               (File.exists?(File.join(ENV['HOME'], RC_FILE)) && File.readlines(File.join(ENV['HOME'], RC_FILE))) ||
               []
 
-      defaults = lines.detect do |line|
-        match = /CONTAINER_RUN=(.*)/.match(line.strip)
-        match && match[1]
+      lines.each do |line|
+        if (match = /CONTAINER_RUN=(.*)/.match(line.strip))
+          defaults = match[1]
+          break
+        end
       end
     end
 

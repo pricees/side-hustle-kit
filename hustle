@@ -140,7 +140,7 @@ class Hustler < Struct.new(:argv, :options)
     `docker cp #{image}:/app $(pwd)`
 
     puts "Removing #{image}"
-    stop_and_remove
+    stop_and_remove_container
 
     puts "Building new image #{image}"
     build
@@ -176,7 +176,7 @@ class Hustler < Struct.new(:argv, :options)
     when "rm"
       remove_container
     when 'pristine'
-      stop_and_remove && remove_image
+      stop_and_remove_container && remove_image
     else
       puts "\n\nERROR: hustle '#{command}' does not exist. Run 'hustle --help'"
       puts "\n\nDefault run syntax:\n\n\t#{container_run_regex}\n\n"

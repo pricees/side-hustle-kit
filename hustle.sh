@@ -25,8 +25,11 @@ bootstrap() {
     if [ "$OSTYPE" == "linux-gnu" ]; then
       read -p "Do you wish to install this docker?" yn
       case $yn in
-        [Yy]* ) curl -sSL https://get.docker.com/ | sh
-        [Nn]* ) exit;;
+        [Yy]* ) 
+          curl -sSL https://get.docker.com/ | sh
+          exit;;
+        [Nn]* ) 
+          exit;;
         * ) echo "Please answer yes or no.";;
       esac
     elif [[ "$OSTYPE" == "darwin"* ]]; then
@@ -46,7 +49,9 @@ bootstrap() {
         [Yy]* ) 
           curl -sSL https://get.sidehustlekit.com/hustle -o hustle
           chmod +x hustle
-        [Nn]* ) exit;;
+          exit;;
+        [Nn]* ) 
+          exit;;
         * ) echo "Please answer yes or no.";;
       esac
   fi
